@@ -1,32 +1,63 @@
 import streamlit as st
-import json
-import os
+from supabase import create_client
 from datetime import datetime
+
+# ─── CONEXIÓN SUPABASE ────────────────────────────────────────────────────────
+SUPABASE_URL = "https://rqpenjhtoxipdpskptyo.supabase.co"
+SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJxcGVuamh0b3hpcGRwc2twdHlvIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODA1MTgzMDEsImV4cCI6MjA5NjA5NDMwMX0.igyIJEk4y6QTdcmVhDy12SGZE2wdHRjwuEg5kcaSQWU"
+supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 st.set_page_config(page_title="StockAI", page_icon="📦")
 
-if "inventario" not in st.session_state:
-    st.session_state.inventario = {}
-if "historial" not in st.session_state:
-    st.session_state.historial = []
-if "config" not in st.session_state:
-    st.session_state.config = {"empresa": "Mi Empresa", "logo": None}
+# ─── CARGAR DATOS ─────────────────────────────────────────────────────────────
+def cargar_inventario():
+    res = supabase.table("inventario").select("*").execute()
+    return {r["material"]: {"cantidad": r["cantidad"], "unidad": r["unidad"], "id": r["id"]} for r in res.data}
 
-def cargar_datos(archivo, default):
-    if os.path.exists(archivo):
-        with open(archivo, "r") as f:
-            return json.load(f)
-    return default
+def cargar_historial():
+    res = supabase.table("historial").select("*").order("id", desc=True).execute()
+    return res.data
 
-def guardar_datos(archivo, datos):
-    with open(archivo, "w") as f:
-        json.dump(datos, f, ensure_ascii=False)
+def cargar_logistica():
+    res = supabase.table("logistica").select("*").order("id", desc=True).execute()
+    return res.data
 
-st.session_state.inventario = cargar_datos("inventario.json", {})
-st.session_state.historial = cargar_datos("historial.json", [])
-st.session_state.config = cargar_datos("config.json", {"empresa": "Mi Empresa"})
+def cargar_config():
+    res = supabase.table("config").select("*").execute()
+    if res.data:
+        return res.data[0]
+    return {"empresa": "StockAI"}
 
-st.title(f"📦 {st.session_state.config.get('empresa', 'StockAI')}")
+# ─── GUARDAR DATOS ────────────────────────────────────────────────────────────
+def guardar_entrada_inventario(nombre, cantidad, unidad):
+    inv = cargar_inventario()
+    if nombre in inv:
+        nueva = inv[nombre]["cantidad"] + cantidad
+        supabase.table("inventario").update({"cantidad": nueva}).eq("id", inv[nombre]["id"]).execute()
+    else:
+        supabase.table("inventario").insert({"material": nombre, "cantidad": cantidad, "unidad": unidad}).execute()
+
+def guardar_salida_inventario(nombre, cantidad):
+    inv = cargar_inventario()
+    nueva = inv[nombre]["cantidad"] - cantidad
+    supabase.table("inventario").update({"cantidad": nueva}).eq("id", inv[nombre]["id"]).execute()
+
+def guardar_historial(registro):
+    supabase.table("historial").insert(registro).execute()
+
+def guardar_logistica(registro):
+    supabase.table("logistica").insert(registro).execute()
+
+def guardar_config(empresa):
+    res = supabase.table("config").select("*").execute()
+    if res.data:
+        supabase.table("config").update({"empresa": empresa}).eq("id", res.data[0]["id"]).execute()
+    else:
+        supabase.table("config").insert({"empresa": empresa}).execute()
+
+# ─── INIT ─────────────────────────────────────────────────────────────────────
+config = cargar_config()
+st.title(f"📦 {config.get('empresa', 'StockAI')}")
 st.write("Control de inventario inteligente")
 
 tabs = st.tabs(["📥 Entrada", "📤 Salida", "📦 Inventario", "📋 Historial", "🚛 Logística", "⚙️ Configuración"])
@@ -65,12 +96,8 @@ with tabs[0]:
 
     if st.button("✅ Registrar entrada"):
         if nombre and responsable:
-            if nombre in st.session_state.inventario:
-                st.session_state.inventario[nombre]["cantidad"] += cantidad
-            else:
-                st.session_state.inventario[nombre] = {"cantidad": cantidad, "unidad": unidad}
-            guardar_datos("inventario.json", st.session_state.inventario)
-            st.session_state.historial.append({
+            guardar_entrada_inventario(nombre, cantidad, unidad)
+            guardar_historial({
                 "fecha": datetime.now().strftime("%Y-%m-%d %H:%M"),
                 "tipo": "entrada",
                 "material": nombre,
@@ -89,7 +116,6 @@ with tabs[0]:
                 "folio": folio,
                 "fecha_manual": str(fecha_manual),
             })
-            guardar_datos("historial.json", st.session_state.historial)
             st.success(f"✅ Entrada registrada: {cantidad} {unidad} de {nombre}.")
         else:
             st.error("Completa nombre del material y responsable.")
@@ -97,8 +123,9 @@ with tabs[0]:
 # ─── TAB 1: SALIDA ────────────────────────────────────────────────────────────
 with tabs[1]:
     st.subheader("Registrar salida de material")
-    if st.session_state.inventario:
-        material_salida = st.selectbox("Material", list(st.session_state.inventario.keys()))
+    inventario = cargar_inventario()
+    if inventario:
+        material_salida = st.selectbox("Material", list(inventario.keys()))
         col1, col2 = st.columns(2)
         with col1:
             cantidad_salida = st.number_input("Cantidad", min_value=0.0, step=1.0, key="salida")
@@ -122,10 +149,9 @@ with tabs[1]:
         notas_salida = st.text_area("Notas", key="notas_salida")
 
         if st.button("✅ Registrar salida"):
-            if cantidad_salida <= st.session_state.inventario[material_salida]["cantidad"]:
-                st.session_state.inventario[material_salida]["cantidad"] -= cantidad_salida
-                guardar_datos("inventario.json", st.session_state.inventario)
-                st.session_state.historial.append({
+            if cantidad_salida <= inventario[material_salida]["cantidad"]:
+                guardar_salida_inventario(material_salida, cantidad_salida)
+                guardar_historial({
                     "fecha": datetime.now().strftime("%Y-%m-%d %H:%M"),
                     "tipo": "salida",
                     "material": material_salida,
@@ -141,7 +167,6 @@ with tabs[1]:
                     "firma_encargado": firma_encargado,
                     "notas": notas_salida,
                 })
-                guardar_datos("historial.json", st.session_state.historial)
                 st.success(f"✅ Salida registrada: {cantidad_salida} de {material_salida} para {cliente}.")
             else:
                 st.error("No hay suficiente material en inventario.")
@@ -151,8 +176,9 @@ with tabs[1]:
 # ─── TAB 2: INVENTARIO ────────────────────────────────────────────────────────
 with tabs[2]:
     st.subheader("Inventario actual")
-    if st.session_state.inventario:
-        for material, datos in st.session_state.inventario.items():
+    inventario = cargar_inventario()
+    if inventario:
+        for material, datos in inventario.items():
             col1, col2 = st.columns([3, 1])
             with col1:
                 st.write(f"**{material}**")
@@ -165,8 +191,9 @@ with tabs[2]:
 # ─── TAB 3: HISTORIAL ─────────────────────────────────────────────────────────
 with tabs[3]:
     st.subheader("Historial de movimientos")
-    if st.session_state.historial:
-        for mov in reversed(st.session_state.historial):
+    historial = cargar_historial()
+    if historial:
+        for mov in historial:
             tipo_emoji = "🟢" if mov["tipo"] == "entrada" else "🔴"
             with st.expander(f"{tipo_emoji} {mov['fecha']} — Folio: {mov.get('folio', '-')} — {mov['tipo'].upper()} — {mov['material']}: {mov['cantidad']}"):
                 if mov["tipo"] == "entrada":
@@ -208,12 +235,9 @@ with tabs[4]:
 
     notas_log = st.text_area("Notas del viaje")
 
-    if "logistica" not in st.session_state:
-        st.session_state.logistica = cargar_datos("logistica.json", [])
-
     if st.button("✅ Registrar viaje"):
         if chofer and carro_log:
-            st.session_state.logistica.append({
+            guardar_logistica({
                 "fecha": datetime.now().strftime("%Y-%m-%d %H:%M"),
                 "chofer": chofer,
                 "carro": carro_log,
@@ -223,12 +247,12 @@ with tabs[4]:
                 "km": km,
                 "notas": notas_log,
             })
-            guardar_datos("logistica.json", st.session_state.logistica)
             st.success("✅ Viaje registrado.")
 
-    if st.session_state.logistica:
+    logistica = cargar_logistica()
+    if logistica:
         st.subheader("Viajes registrados")
-        for viaje in reversed(st.session_state.logistica):
+        for viaje in logistica:
             with st.expander(f"🚛 {viaje['fecha']} — {viaje['chofer']} — {viaje['cliente']}"):
                 st.write(f"**Carro:** {viaje['carro']}")
                 st.write(f"**Litros diésel:** {viaje['litros']}")
@@ -239,9 +263,9 @@ with tabs[4]:
 # ─── TAB 5: CONFIGURACIÓN ─────────────────────────────────────────────────────
 with tabs[5]:
     st.subheader("⚙️ Configuración de la empresa")
-    empresa_nombre = st.text_input("Nombre de la empresa", value=st.session_state.config.get("empresa", ""))
+    config = cargar_config()
+    empresa_nombre = st.text_input("Nombre de la empresa", value=config.get("empresa", ""))
 
     if st.button("💾 Guardar configuración"):
-        st.session_state.config["empresa"] = empresa_nombre
-        guardar_datos("config.json", st.session_state.config)
+        guardar_config(empresa_nombre)
         st.success("✅ Configuración guardada. Recarga la página para ver el nombre actualizado.")

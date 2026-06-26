@@ -1,11 +1,5 @@
-import streamlit as st
-from supabase import create_client
-from datetime import datetime
-
-# ─── CONEXIÓN SUPABASE ────────────────────────────────────────────────────────
-SUPABASE_URL = "https://rqpenjhtoxipdpskptyo.supabase.co"
-SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJxcGVuamh0b3hpcGRwc2twdHlvIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODA1MTgzMDEsImV4cCI6MjA5NjA5NDMwMX0.igyIJEk4y6QTdcmVhDy12SGZE2wdHRjwuEg5kcaSQWU"
-supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+SUPABASE_URL = st.secrets["SUPABASE_URL"]
+SUPABASE_KEY = st.secrets["SUPABASE_KEY"]supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 st.set_page_config(page_title="StockAI", page_icon="📦")
 
